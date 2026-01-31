@@ -23,7 +23,7 @@ A professional, lightweight, and fast desktop tool to convert **SVG files to G-C
 The application is cross-platform (Windows & Linux).
 
 ### Downloading (Binary Version)
-Find the latest `.exe` (Windows) or `.AppImage` (Linux) in the [Releases](https://github.com/YourName/svg_to_gcode/releases) tab.
+Find the latest `.exe` (Windows) or `.AppImage` (Linux) in the [Releases](https://github.com/KsanneK/svg_to_gcode/releases) tab.
 
 ### Local Development
 1. Install [Rust](https://rustup.rs/) and [Node.js](https://nodejs.org/).

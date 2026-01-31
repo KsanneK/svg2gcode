@@ -44,5 +44,5 @@ jobs:
           tagName: v__VERSION__ # tauri-action replaces this with app version
           releaseName: "SVG 2 GCode v__VERSION__"
           releaseBody: "Automatycznie wygenerowane wydanie."
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false

@@ -89,7 +89,7 @@ function flattenQuadraticBezier(
 }
 
 // Main generation function
-export const generateGCode = (svgContent: string, params: GCodeParams): string => {
+export const generateGCode = (svgContent: string, params: GCodeParams): { gcode: string, paths: Point[][] } => {
     const parsed = parse(svgContent);
     const paths: string[] = [];
 
@@ -124,6 +124,7 @@ export const generateGCode = (svgContent: string, params: GCodeParams): string =
 
     // Scale factor for Clipper (integer math)
     const SCALE = 1000;
+    const visualizationPaths: Point[][] = [];
 
     paths.forEach((d) => {
         const commands = makeAbsolute(parsePathData(d));
@@ -214,6 +215,10 @@ export const generateGCode = (svgContent: string, params: GCodeParams): string =
         finalPaths.forEach(path => {
             if (path.length === 0) return;
 
+            // Convert back to normal units for visualization
+            const vizPath: Point[] = path.map(p => ({ x: p.X / SCALE, y: p.Y / SCALE }));
+            visualizationPaths.push(vizPath);
+
             // Move to start
             const startIdx = 0;
             const p0 = path[startIdx];
@@ -232,6 +237,8 @@ export const generateGCode = (svgContent: string, params: GCodeParams): string =
             if (path.length > 2) { // Determine if we should close strictly? 
                 // Let's go back to start to ensure full cut
                 gcodeLines.push(`G1 X${(p0.X / SCALE).toFixed(3)} Y${(p0.Y / SCALE).toFixed(3)}`);
+                // Also close visualization path
+                vizPath.push(vizPath[0]);
             }
 
             gcodeLines.push(`G0 Z${params.safeZ} ; Wyjazd`);
@@ -241,7 +248,7 @@ export const generateGCode = (svgContent: string, params: GCodeParams): string =
     gcodeLines.push('M5 ; Zatrzymaj wrzeciono');
     gcodeLines.push('M30 ; Koniec programu');
 
-    return gcodeLines.join('\n');
+    return { gcode: gcodeLines.join('\n'), paths: visualizationPaths };
 };
 
 

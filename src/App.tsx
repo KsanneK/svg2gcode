@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
-import { Upload, Cog, Play } from 'lucide-react';
+import { Upload, Cog, Play, Eye, X } from 'lucide-react';
 import './App.css';
 import { generateGCode, GCodeParams } from './lib/gcode';
 
@@ -17,6 +17,8 @@ function App() {
     toolDiameter: 3.175,
     cutMode: 'on-line',
   });
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewPaths, setPreviewPaths] = useState<{ x: number, y: number }[][]>([]);
 
   const handleFileSelect = async () => {
     // In a web/tauri context, we can use a hidden input or drag/drop
@@ -44,7 +46,7 @@ function App() {
     if (!svgContent) return;
 
     try {
-      const gcode = generateGCode(svgContent, params);
+      const { gcode } = generateGCode(svgContent, params);
       const path = await save({
         filters: [{
           name: 'G-Code',
@@ -61,6 +63,13 @@ function App() {
       console.error(err);
       alert('Nie udało się zapisać pliku: ' + err);
     }
+  };
+
+  const handlePreview = () => {
+    if (!svgContent) return;
+    const { paths } = generateGCode(svgContent, params);
+    setPreviewPaths(paths);
+    setShowPreview(true);
   };
 
   return (
@@ -196,7 +205,15 @@ function App() {
             )}
           </div>
 
-          <div style={{ marginTop: 'auto', textAlign: 'right' }}>
+          <div style={{ marginTop: 'auto', textAlign: 'right', display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+            <button
+              className="btn"
+              style={{ backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+              onClick={handlePreview}
+              disabled={!svgContent}
+            >
+              <Eye size={20} /> Podgląd wycinania
+            </button>
             <button
               className="btn btn-primary"
               onClick={handleConvert}
@@ -207,6 +224,56 @@ function App() {
           </div>
         </div>
       </div>
+
+      {showPreview && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <button className="close-button" onClick={() => setShowPreview(false)}>
+              <X size={24} />
+            </button>
+            <h2>Podgląd ścieżki narzędzia</h2>
+
+            {(() => {
+              if (previewPaths.length === 0) return <p>Brak ścieżek do wyświetlenia</p>;
+              let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+              previewPaths.flat().forEach(p => {
+                minX = Math.min(minX, p.x);
+                minY = Math.min(minY, p.y);
+                maxX = Math.max(maxX, p.x);
+                maxY = Math.max(maxY, p.y);
+              });
+              // If infinity (empty), set default
+              if (minX === Infinity) { minX = 0; minY = 0; maxX = 100; maxY = 100; }
+
+              const padding = 5;
+              const vb = `${minX - padding} ${minY - padding} ${maxX - minX + padding * 2} ${maxY - minY + padding * 2}`;
+
+              return (
+                <div className="preview-container">
+                  <svg viewBox={vb} style={{ width: '100%', height: '100%', background: '#fff' }}>
+                    <g transform="scale(1, 1)">
+                      {previewPaths.map((path, i) => (
+                        <path
+                          key={i}
+                          d={path.map((p, j) => `${j === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ') + (path.length > 2 ? ' Z' : '')}
+                          fill="none"
+                          stroke="#ef4444"
+                          strokeWidth="1"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                      ))}
+                    </g>
+                  </svg>
+                </div>
+              );
+            })()}
+
+            <div style={{ marginTop: '1rem', color: 'var(--text-secondary)' }}>
+              <small>Czerwona linia: Ścieżka środka freza (z uwzględnieniem offsetu)</small>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

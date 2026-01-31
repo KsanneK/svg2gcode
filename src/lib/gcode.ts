@@ -38,9 +38,15 @@ export interface GCodeParams {
 }
 
 // Simple point interface
-interface Point {
+export interface Point {
     x: number;
     y: number;
+}
+
+export interface Segment {
+    p1: Point;
+    p2: Point;
+    type: 'G0' | 'G1';
 }
 
 // Convert Cubic Bezier to lines
@@ -89,7 +95,7 @@ function flattenQuadraticBezier(
 }
 
 // Main generation function
-export const generateGCode = (svgContent: string, params: GCodeParams): { gcode: string, paths: Point[][] } => {
+export const generateGCode = (svgContent: string, params: GCodeParams): { gcode: string, segments: Segment[] } => {
     const parsed = parse(svgContent);
     const paths: string[] = [];
 
@@ -124,7 +130,8 @@ export const generateGCode = (svgContent: string, params: GCodeParams): { gcode:
 
     // Scale factor for Clipper (integer math)
     const SCALE = 1000;
-    const visualizationPaths: Point[][] = [];
+    const visualizationSegments: Segment[] = [];
+    let headPos: Point = { x: 0, y: 0 }; // Track current head position (assumed 0,0 at start)
 
     paths.forEach((d) => {
         const commands = makeAbsolute(parsePathData(d));
@@ -184,17 +191,7 @@ export const generateGCode = (svgContent: string, params: GCodeParams): { gcode:
             rawPath.forEach(p => subjPath.push(p));
 
             // Add path, JoinType (Round=2), EndType (ClosedPolygon=0 or Open=?)
-            // Assuming paths are closed for offset to make sense usually, but user might have open paths.
-            // ClipperOffset works on both.
-            // jtRound = 2, etClosedPolygon = 0
             co.AddPath(subjPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-
-            // Delta: -ve = inside (holes shrink), +ve = outside (expand)
-            // But for "Inside" cut of a hole, we want to shrink the hole?
-            // Or does user mean "Inside the shape"?
-            // If I have a Circle R=50.
-            // Inside cut -> R=47.5 (if tool dia=5). Delta = -2.5.
-            // Outside cut -> R=52.5. Delta = +2.5.
 
             const offset = (params.toolDiameter / 2.0) * SCALE;
             const delta = params.cutMode === 'outside' ? offset : -offset;
@@ -205,7 +202,6 @@ export const generateGCode = (svgContent: string, params: GCodeParams): { gcode:
             if (offsetPaths && offsetPaths.length > 0) {
                 finalPaths = offsetPaths;
             } else {
-                // Fallback or error? If offset collapses the shape (too small), result is empty.
                 console.warn("Offset resulted in empty path (feature too small?)");
                 finalPaths = [];
             }
@@ -215,40 +211,48 @@ export const generateGCode = (svgContent: string, params: GCodeParams): { gcode:
         finalPaths.forEach(path => {
             if (path.length === 0) return;
 
-            // Convert back to normal units for visualization
-            const vizPath: Point[] = path.map(p => ({ x: p.X / SCALE, y: p.Y / SCALE }));
-            visualizationPaths.push(vizPath);
-
             // Move to start
             const startIdx = 0;
-            const p0 = path[startIdx];
-            gcodeLines.push(`G0 X${(p0.X / SCALE).toFixed(3)} Y${(p0.Y / SCALE).toFixed(3)}`);
+            const p0 = { x: path[startIdx].X / SCALE, y: path[startIdx].Y / SCALE };
+
+            // G0 Rapid Move to Start (Green)
+            visualizationSegments.push({ p1: { ...headPos }, p2: { ...p0 }, type: 'G0' });
+            headPos = { ...p0 };
+
+            gcodeLines.push(`G0 X${p0.x.toFixed(3)} Y${p0.y.toFixed(3)}`);
             gcodeLines.push(`G0 Z${params.safeZ} ; Najazd`);
             gcodeLines.push(`G1 Z-${params.depthOfCut} F${params.plungeRate} ; Wjazd`);
             gcodeLines.push(`F${params.feedRate}`);
 
             for (let i = 1; i < path.length; i++) {
-                const p = path[i];
-                gcodeLines.push(`G1 X${(p.X / SCALE).toFixed(3)} Y${(p.Y / SCALE).toFixed(3)}`);
+                const p = { x: path[i].X / SCALE, y: path[i].Y / SCALE };
+
+                // G1 Cut Move (Red)
+                visualizationSegments.push({ p1: { ...headPos }, p2: { ...p }, type: 'G1' });
+                headPos = { ...p };
+
+                gcodeLines.push(`G1 X${p.x.toFixed(3)} Y${p.y.toFixed(3)}`);
             }
 
             // Close loop if it was closed source
-            // Clipper usually returns closed paths for closed inputs
-            if (path.length > 2) { // Determine if we should close strictly? 
-                // Let's go back to start to ensure full cut
-                gcodeLines.push(`G1 X${(p0.X / SCALE).toFixed(3)} Y${(p0.Y / SCALE).toFixed(3)}`);
-                // Also close visualization path
-                vizPath.push(vizPath[0]);
+            if (path.length > 2) {
+                // G1 Close Cut (Red)
+                visualizationSegments.push({ p1: { ...headPos }, p2: { ...p0 }, type: 'G1' });
+                headPos = { ...p0 };
+
+                gcodeLines.push(`G1 X${p0.x.toFixed(3)} Y${p0.y.toFixed(3)}`);
             }
 
             gcodeLines.push(`G0 Z${params.safeZ} ; Wyjazd`);
         });
     });
 
+    // Return to home
+    visualizationSegments.push({ p1: { ...headPos }, p2: { x: 0, y: 0 }, type: 'G0' });
+
     gcodeLines.push('M5 ; Zatrzymaj wrzeciono');
+    gcodeLines.push('G0 X0 Y0 ; Powrót do bazy');
     gcodeLines.push('M30 ; Koniec programu');
 
-    return { gcode: gcodeLines.join('\n'), paths: visualizationPaths };
+    return { gcode: gcodeLines.join('\n'), segments: visualizationSegments };
 };
-
-

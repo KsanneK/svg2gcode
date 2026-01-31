@@ -3,7 +3,7 @@ import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { Upload, Cog, Play, Eye, X } from 'lucide-react';
 import './App.css';
-import { generateGCode, GCodeParams } from './lib/gcode';
+import { generateGCode, GCodeParams, Segment } from './lib/gcode';
 
 function App() {
   const [svgContent, setSvgContent] = useState<string | null>(null);
@@ -18,7 +18,8 @@ function App() {
     cutMode: 'on-line',
   });
   const [showPreview, setShowPreview] = useState(false);
-  const [previewPaths, setPreviewPaths] = useState<{ x: number, y: number }[][]>([]);
+  const [previewSegments, setPreviewSegments] = useState<Segment[]>([]);
+  const [playedIndex, setPlayedIndex] = useState(0);
 
   const handleFileSelect = async () => {
     // In a web/tauri context, we can use a hidden input or drag/drop
@@ -67,9 +68,21 @@ function App() {
 
   const handlePreview = () => {
     if (!svgContent) return;
-    const { paths } = generateGCode(svgContent, params);
-    setPreviewPaths(paths);
+    const { segments } = generateGCode(svgContent, params);
+    setPreviewSegments(segments);
+    setPlayedIndex(0);
     setShowPreview(true);
+
+    // Simple animation loop
+    let idx = 0;
+    const interval = setInterval(() => {
+      idx += 5; // Speed up
+      if (idx > segments.length) {
+        idx = segments.length;
+        clearInterval(interval);
+      }
+      setPlayedIndex(idx);
+    }, 16);
   };
 
   return (
@@ -234,42 +247,71 @@ function App() {
             <h2>Podgląd ścieżki narzędzia</h2>
 
             {(() => {
-              if (previewPaths.length === 0) return <p>Brak ścieżek do wyświetlenia</p>;
+              if (previewSegments.length === 0) return <p>Brak ścieżek do wyświetlenia</p>;
+
+              // Find bounds
               let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-              previewPaths.flat().forEach(p => {
-                minX = Math.min(minX, p.x);
-                minY = Math.min(minY, p.y);
-                maxX = Math.max(maxX, p.x);
-                maxY = Math.max(maxY, p.y);
+              previewSegments.forEach(s => {
+                minX = Math.min(minX, s.p1.x, s.p2.x);
+                minY = Math.min(minY, s.p1.y, s.p2.y);
+                maxX = Math.max(maxX, s.p1.x, s.p2.x);
+                maxY = Math.max(maxY, s.p1.y, s.p2.y);
               });
-              // If infinity (empty), set default
+
               if (minX === Infinity) { minX = 0; minY = 0; maxX = 100; maxY = 100; }
 
-              const padding = 5;
+              const padding = 10;
               const vb = `${minX - padding} ${minY - padding} ${maxX - minX + padding * 2} ${maxY - minY + padding * 2}`;
+
+              const visibleSegments = previewSegments.slice(0, playedIndex);
+              const lastSegment = visibleSegments[visibleSegments.length - 1];
 
               return (
                 <div className="preview-container">
                   <svg viewBox={vb} style={{ width: '100%', height: '100%', background: '#fff' }}>
                     <g transform="scale(1, 1)">
-                      {previewPaths.map((path, i) => (
-                        <path
+                      {/* Grid / Origin */}
+                      <line x1={minX - padding} y1="0" x2={maxX + padding} y2="0" stroke="#eee" strokeWidth="0.5" />
+                      <line x1="0" y1={minY - padding} x2="0" y2={maxY + padding} stroke="#eee" strokeWidth="0.5" />
+
+                      {visibleSegments.map((seg, i) => (
+                        <line
                           key={i}
-                          d={path.map((p, j) => `${j === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ') + (path.length > 2 ? ' Z' : '')}
-                          fill="none"
-                          stroke="#ef4444"
-                          strokeWidth="1"
+                          x1={seg.p1.x}
+                          y1={seg.p1.y}
+                          x2={seg.p2.x}
+                          y2={seg.p2.y}
+                          stroke={seg.type === 'G0' ? '#22c55e' : '#ef4444'}
+                          strokeWidth={seg.type === 'G0' ? 0.5 : 1.5}
+                          strokeDasharray={seg.type === 'G0' ? "4 2" : "none"}
+                          opacity={seg.type === 'G0' ? 0.6 : 1}
                           vectorEffect="non-scaling-stroke"
                         />
                       ))}
+
+                      {/* Tool Head Position */}
+                      {lastSegment && (
+                        <circle
+                          cx={lastSegment.p2.x}
+                          cy={lastSegment.p2.y}
+                          r={Math.max(1, (maxX - minX) / 100)}
+                          fill="blue"
+                          fillOpacity="0.5"
+                        />
+                      )}
                     </g>
                   </svg>
                 </div>
               );
             })()}
 
-            <div style={{ marginTop: '1rem', color: 'var(--text-secondary)' }}>
-              <small>Czerwona linia: Ścieżka środka freza (z uwzględnieniem offsetu)</small>
+            <div style={{ marginTop: '1rem', color: 'var(--text-secondary)', display: 'flex', gap: '1rem', fontSize: '0.9rem' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                <span style={{ width: 10, height: 10, background: '#ef4444', borderRadius: 2 }}></span> Cięcie (G1)
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                <span style={{ width: 10, height: 10, background: '#22c55e', borderRadius: 2 }}></span> Ruch jałowy (G0)
+              </span>
             </div>
           </div>
         </div>

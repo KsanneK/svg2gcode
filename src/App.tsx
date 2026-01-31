@@ -13,9 +13,12 @@ function App() {
     feedRate: 800,
     plungeRate: 300,
     depthOfCut: 1.0,
+    passDepth: 2.0,
     safeZ: 5.0,
     toolDiameter: 3.175,
     cutMode: 'on-line',
+    plungeMode: 'vertical',
+    pathOrdering: 'inside-out',
   });
   const [showPreview, setShowPreview] = useState(false);
   const [previewSegments, setPreviewSegments] = useState<Segment[]>([]);
@@ -149,12 +152,24 @@ function App() {
           </div>
 
           <div className="form-group">
-            <label>Głębokość frezowania (mm)</label>
+            <label>Głębokość frezowania całkowita (mm)</label>
             <input
               type="number"
               className="form-input"
               name="depthOfCut"
               value={params.depthOfCut}
+              step="0.1"
+              onChange={handleChange}
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Głębokość na przejście (mm)</label>
+            <input
+              type="number"
+              className="form-input"
+              name="passDepth"
+              value={params.passDepth}
               step="0.1"
               onChange={handleChange}
             />
@@ -196,6 +211,34 @@ function App() {
               <option value="on-line">Po linii (Brak kompensacji)</option>
               <option value="outside">Na zewnątrz (Outside)</option>
               <option value="inside">Wewnątrz (Inside)</option>
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label>Tryb zagłębiania</label>
+            <select
+              className="form-input"
+              name="plungeMode"
+              value={params.plungeMode}
+              // @ts-ignore
+              onChange={(e) => setParams(prev => ({ ...prev, plungeMode: e.target.value }))}
+            >
+              <option value="vertical">Pionowy</option>
+              <option value="spiral">Spiralny</option>
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label>Kolejność wycinania</label>
+            <select
+              className="form-input"
+              name="pathOrdering"
+              value={params.pathOrdering}
+              // @ts-ignore
+              onChange={(e) => setParams(prev => ({ ...prev, pathOrdering: e.target.value }))}
+            >
+              <option value="inside-out">Od środka (zalecane)</option>
+              <option value="natural">Naturalna kolejność</option>
             </select>
           </div>
         </div>
@@ -278,7 +321,7 @@ function App() {
 
               if (minX === Infinity) { minX = 0; minY = 0; maxX = 100; maxY = 100; }
 
-              const padding = 10;
+              const padding = 20;
               const vb = `${minX - padding} ${minY - padding} ${maxX - minX + padding * 2} ${maxY - minY + padding * 2}`;
 
               const visibleSegments = previewSegments.slice(0, playedIndex);

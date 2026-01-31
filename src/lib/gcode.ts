@@ -32,9 +32,12 @@ export interface GCodeParams {
     feedRate: number;
     plungeRate: number;
     depthOfCut: number;
+    passDepth: number; // Depth per pass for multi-pass cutting
     safeZ: number;
     toolDiameter: number;
     cutMode: 'on-line' | 'inside' | 'outside';
+    plungeMode: 'vertical' | 'spiral';
+    pathOrdering: 'natural' | 'inside-out'; // Order paths from smallest to largest
 }
 
 // Simple point interface
@@ -133,6 +136,8 @@ export const generateGCode = (svgContent: string, params: GCodeParams): { gcode:
     const visualizationSegments: Segment[] = [];
     let headPos: Point = { x: 0, y: 0 }; // Track current head position (assumed 0,0 at start)
 
+    const allFinalPaths: { X: number, Y: number }[][] = [];
+
     paths.forEach((d) => {
         const commands = makeAbsolute(parsePathData(d));
         let currentPos: Point = { x: 0, y: 0 };
@@ -190,10 +195,8 @@ export const generateGCode = (svgContent: string, params: GCodeParams): { gcode:
             subPaths.push(currentSubPath);
         }
 
-        let finalPaths: { X: number, Y: number }[][] = [];
-
         if (params.cutMode === 'on-line') {
-            finalPaths = subPaths;
+            allFinalPaths.push(...subPaths);
         } else {
             // Offset logic
             const co = new ClipperLib.ClipperOffset();
@@ -213,30 +216,97 @@ export const generateGCode = (svgContent: string, params: GCodeParams): { gcode:
 
             // Convert back
             if (offsetPaths && offsetPaths.length > 0) {
-                finalPaths = offsetPaths;
+                for (let i = 0; i < offsetPaths.length; i++) {
+                    allFinalPaths.push(offsetPaths[i]);
+                }
             } else {
                 console.warn("Offset resulted in empty path (feature too small?)");
-                finalPaths = [];
             }
         }
+    });
 
-        // Generate G-code for each resulting path (could be multiple if one shape splits)
-        finalPaths.forEach(path => {
-            if (path.length === 0) return;
+    // Sort paths if requested
+    if (params.pathOrdering === 'inside-out') {
+        allFinalPaths.sort((a, b) => {
+            const areaA = Math.abs(ClipperLib.Clipper.Area(a));
+            const areaB = Math.abs(ClipperLib.Clipper.Area(b));
+            return areaA - areaB;
+        });
+    }
 
-            // Move to start
-            const startIdx = 0;
-            const p0 = { x: path[startIdx].X / SCALE, y: path[startIdx].Y / SCALE };
+    // Generate G-code for each resulting path (could be multiple if one shape splits)
+    allFinalPaths.forEach(path => {
+        if (path.length === 0) return;
 
-            // G0 Rapid Move to Start (Green)
-            visualizationSegments.push({ p1: { ...headPos }, p2: { ...p0 }, type: 'G0' });
-            headPos = { ...p0 };
+        // Move to start
+        const startIdx = 0;
+        const p0 = { x: path[startIdx].X / SCALE, y: path[startIdx].Y / SCALE };
 
-            gcodeLines.push(`G0 X${p0.x.toFixed(3)} Y${p0.y.toFixed(3)}`);
-            gcodeLines.push(`G0 Z${params.safeZ} ; Najazd`);
-            gcodeLines.push(`G1 Z-${params.depthOfCut} F${params.plungeRate} ; Wjazd`);
+        // Calculate number of passes needed
+        const numPasses = Math.ceil(params.depthOfCut / params.passDepth);
+
+        // Multi-pass cutting loop
+        for (let passIndex = 0; passIndex < numPasses; passIndex++) {
+            // Calculate current pass depth (last pass might be shallower)
+            const currentDepth = Math.min((passIndex + 1) * params.passDepth, params.depthOfCut);
+            const isFirstPass = passIndex === 0;
+            const isLastPass = passIndex === numPasses - 1;
+
+            gcodeLines.push(`; Pass ${passIndex + 1}/${numPasses} - Depth: ${currentDepth.toFixed(3)}mm`);
+
+            // Move to start position (only for first pass, otherwise already there)
+            if (isFirstPass) {
+                // G0 Rapid Move to Start (Green)
+                visualizationSegments.push({ p1: { ...headPos }, p2: { ...p0 }, type: 'G0' });
+                headPos = { ...p0 };
+
+                gcodeLines.push(`G0 X${p0.x.toFixed(3)} Y${p0.y.toFixed(3)}`);
+                gcodeLines.push(`G0 Z${params.safeZ} ; Najazd`);
+            }
+
+            // Plunge to current depth
+            const plungeDepth = currentDepth;
+
+            if (params.plungeMode === 'vertical' || !isFirstPass) {
+                // Vertical plunge - straight down (always use vertical for subsequent passes)
+                gcodeLines.push(`G1 Z-${plungeDepth.toFixed(3)} F${params.plungeRate} ; Wjazd ${isFirstPass ? 'pionowy' : 'do kolejnej głębokości'}`);
+            } else {
+                // Spiral plunge - only for first pass
+                const spiralRadius = params.toolDiameter * 0.75;
+
+                if (path.length > 1) {
+                    const p1 = { x: path[1].X / SCALE, y: path[1].Y / SCALE };
+                    const dx = p1.x - p0.x;
+                    const dy = p1.y - p0.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    if (dist > 0.001) {
+                        // Perpendicular direction for spiral
+                        const perpX = -dy / dist;
+                        const perpY = dx / dist;
+
+                        // Create a small arc
+                        const arcX = p0.x + perpX * spiralRadius;
+                        const arcY = p0.y + perpY * spiralRadius;
+
+                        gcodeLines.push(`G1 X${arcX.toFixed(3)} Y${arcY.toFixed(3)} Z${(-plungeDepth / 2).toFixed(3)} F${params.plungeRate} ; Wjazd spiralny - część 1`);
+                        gcodeLines.push(`G1 X${p0.x.toFixed(3)} Y${p0.y.toFixed(3)} Z-${plungeDepth.toFixed(3)} F${params.plungeRate} ; Wjazd spiralny - część 2`);
+
+                        // Update head position for visualization
+                        visualizationSegments.push({ p1: { ...headPos }, p2: { x: arcX, y: arcY }, type: 'G1' });
+                        visualizationSegments.push({ p1: { x: arcX, y: arcY }, p2: { ...p0 }, type: 'G1' });
+                        headPos = { ...p0 };
+                    } else {
+                        gcodeLines.push(`G1 Z-${plungeDepth.toFixed(3)} F${params.plungeRate} ; Wjazd pionowy (fallback)`);
+                    }
+                } else {
+                    gcodeLines.push(`G1 Z-${plungeDepth.toFixed(3)} F${params.plungeRate} ; Wjazd pionowy (fallback)`);
+                }
+            }
+
             gcodeLines.push(`F${params.feedRate}`);
 
+            // Cut the path at current depth
             for (let i = 1; i < path.length; i++) {
                 const p = { x: path[i].X / SCALE, y: path[i].Y / SCALE };
 
@@ -248,7 +318,6 @@ export const generateGCode = (svgContent: string, params: GCodeParams): { gcode:
             }
 
             // Close loop logic check
-            // For closed shapes, we usually want to return to start
             if (path.length > 2) {
                 // G1 Close Cut (Red)
                 visualizationSegments.push({ p1: { ...headPos }, p2: { ...p0 }, type: 'G1' });
@@ -257,8 +326,14 @@ export const generateGCode = (svgContent: string, params: GCodeParams): { gcode:
                 gcodeLines.push(`G1 X${p0.x.toFixed(3)} Y${p0.y.toFixed(3)}`);
             }
 
-            gcodeLines.push(`G0 Z${params.safeZ} ; Wyjazd`);
-        });
+            // Retract after last pass, or prepare for next pass
+            if (isLastPass) {
+                gcodeLines.push(`G0 Z${params.safeZ} ; Wyjazd`);
+            } else {
+                // Stay at current position for next pass
+                gcodeLines.push(`; Preparing for next pass...`);
+            }
+        }
     });
 
     // Return to home

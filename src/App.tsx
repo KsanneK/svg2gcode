@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { Upload, Cog, Play, Eye, X } from 'lucide-react';
@@ -20,6 +20,31 @@ function App() {
   const [showPreview, setShowPreview] = useState(false);
   const [previewSegments, setPreviewSegments] = useState<Segment[]>([]);
   const [playedIndex, setPlayedIndex] = useState(0);
+  const animationInterval = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (animationInterval.current) clearInterval(animationInterval.current);
+    };
+  }, []);
+
+  const runAnimation = (segments: Segment[]) => {
+    if (animationInterval.current) clearInterval(animationInterval.current);
+    setPlayedIndex(0);
+
+    let idx = 0;
+    animationInterval.current = window.setInterval(() => {
+      idx += 5;
+      if (idx > segments.length) {
+        idx = segments.length;
+        if (animationInterval.current) {
+          clearInterval(animationInterval.current);
+          animationInterval.current = null;
+        }
+      }
+      setPlayedIndex(idx);
+    }, 16);
+  };
 
   const handleFileSelect = async () => {
     // In a web/tauri context, we can use a hidden input or drag/drop
@@ -70,19 +95,8 @@ function App() {
     if (!svgContent) return;
     const { segments } = generateGCode(svgContent, params);
     setPreviewSegments(segments);
-    setPlayedIndex(0);
     setShowPreview(true);
-
-    // Simple animation loop
-    let idx = 0;
-    const interval = setInterval(() => {
-      idx += 5; // Speed up
-      if (idx > segments.length) {
-        idx = segments.length;
-        clearInterval(interval);
-      }
-      setPlayedIndex(idx);
-    }, 16);
+    runAnimation(segments);
   };
 
   return (
@@ -305,13 +319,22 @@ function App() {
               );
             })()}
 
-            <div style={{ marginTop: '1rem', color: 'var(--text-secondary)', display: 'flex', gap: '1rem', fontSize: '0.9rem' }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                <span style={{ width: 10, height: 10, background: '#ef4444', borderRadius: 2 }}></span> Cięcie (G1)
-              </span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                <span style={{ width: 10, height: 10, background: '#22c55e', borderRadius: 2 }}></span> Ruch jałowy (G0)
-              </span>
+            <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ color: 'var(--text-secondary)', display: 'flex', gap: '1rem', fontSize: '0.9rem' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                  <span style={{ width: 10, height: 10, background: '#ef4444', borderRadius: 2 }}></span> Cięcie (G1)
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                  <span style={{ width: 10, height: 10, background: '#22c55e', borderRadius: 2 }}></span> Ruch jałowy (G0)
+                </span>
+              </div>
+              <button
+                className="btn"
+                style={{ backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', padding: '0.5rem 1rem' }}
+                onClick={() => runAnimation(previewSegments)}
+              >
+                Ponów animację
+              </button>
             </div>
           </div>
         </div>

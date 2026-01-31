@@ -288,6 +288,23 @@ function App() {
                       <line x1={minX - padding} y1="0" x2={maxX + padding} y2="0" stroke="#eee" strokeWidth="0.5" />
                       <line x1="0" y1={minY - padding} x2="0" y2={maxY + padding} stroke="#eee" strokeWidth="0.5" />
 
+                      {/* Dimensions Lines */}
+                      {/* Width */}
+                      <line x1={minX} y1={maxY + 5} x2={maxX} y2={maxY + 5} stroke="#666" strokeWidth="0.5" />
+                      <line x1={minX} y1={maxY + 2} x2={minX} y2={maxY + 8} stroke="#666" strokeWidth="0.5" />
+                      <line x1={maxX} y1={maxY + 2} x2={maxX} y2={maxY + 8} stroke="#666" strokeWidth="0.5" />
+                      <text x={(minX + maxX) / 2} y={maxY + 12} fontSize="4" textAnchor="middle" fill="#666">
+                        {(maxX - minX).toFixed(1)} mm
+                      </text>
+
+                      {/* Height */}
+                      <line x1={minX - 5} y1={minY} x2={minX - 5} y2={maxY} stroke="#666" strokeWidth="0.5" />
+                      <line x1={minX - 8} y1={minY} x2={minX - 2} y2={minY} stroke="#666" strokeWidth="0.5" />
+                      <line x1={minX - 8} y1={maxY} x2={minX - 2} y2={maxY} stroke="#666" strokeWidth="0.5" />
+                      <text x={minX - 10} y={(minY + maxY) / 2} fontSize="4" textAnchor="middle" fill="#666" transform={`rotate(-90 ${minX - 10} ${(minY + maxY) / 2})`}>
+                        {(maxY - minY).toFixed(1)} mm
+                      </text>
+
                       {visibleSegments.map((seg, i) => (
                         <line
                           key={i}

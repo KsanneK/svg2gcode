@@ -136,20 +136,29 @@ export const generateGCode = (svgContent: string, params: GCodeParams): { gcode:
     paths.forEach((d) => {
         const commands = makeAbsolute(parsePathData(d));
         let currentPos: Point = { x: 0, y: 0 };
-        const rawPath: { X: number, Y: number }[] = [];
+
+        // Collection of all sub-paths from this single path element (which may be a compound path with multiple M commands)
+        const subPaths: { X: number, Y: number }[][] = [];
+        let currentSubPath: { X: number, Y: number }[] = [];
 
         // Convert SVG path to polyline for Clipper
         commands.forEach((cmd: Command) => {
             if (cmd.code === 'M') {
+                // If we have an existing subpath with data, save it
+                if (currentSubPath.length > 0) {
+                    subPaths.push(currentSubPath);
+                }
+                // Start a new subpath
+                currentSubPath = [];
                 currentPos = { x: cmd.x, y: cmd.y };
-                rawPath.push({ X: currentPos.x * SCALE, Y: currentPos.y * SCALE });
+                currentSubPath.push({ X: currentPos.x * SCALE, Y: currentPos.y * SCALE });
             } else if (['L', 'H', 'V'].includes(cmd.code)) {
                 let target = { ...currentPos };
                 if (cmd.code === 'L') target = { x: (cmd as any).x, y: (cmd as any).y };
                 if (cmd.code === 'H') target.x = (cmd as any).x;
                 if (cmd.code === 'V') target.y = (cmd as any).y;
                 currentPos = target;
-                rawPath.push({ X: currentPos.x * SCALE, Y: currentPos.y * SCALE });
+                currentSubPath.push({ X: currentPos.x * SCALE, Y: currentPos.y * SCALE });
             } else if (cmd.code === 'C') {
                 const c = cmd as CommandC;
                 const points = flattenCubicBezier(
@@ -158,7 +167,7 @@ export const generateGCode = (svgContent: string, params: GCodeParams): { gcode:
                     { x: c.x2, y: c.y2 },
                     { x: c.x, y: c.y }
                 );
-                points.forEach(p => rawPath.push({ X: p.x * SCALE, Y: p.y * SCALE }));
+                points.forEach(p => currentSubPath.push({ X: p.x * SCALE, Y: p.y * SCALE }));
                 currentPos = { x: c.x, y: c.y };
             } else if (cmd.code === 'Q') {
                 const q = cmd as CommandQ;
@@ -167,31 +176,35 @@ export const generateGCode = (svgContent: string, params: GCodeParams): { gcode:
                     { x: q.x1, y: q.y1 },
                     { x: q.x, y: q.y }
                 );
-                points.forEach(p => rawPath.push({ X: p.x * SCALE, Y: p.y * SCALE }));
+                points.forEach(p => currentSubPath.push({ X: p.x * SCALE, Y: p.y * SCALE }));
                 currentPos = { x: q.x, y: q.y };
             } else if ('x' in cmd && 'y' in cmd) {
                 const target = { x: (cmd as any).x, y: (cmd as any).y };
                 currentPos = target;
-                rawPath.push({ X: currentPos.x * SCALE, Y: currentPos.y * SCALE });
+                currentSubPath.push({ X: currentPos.x * SCALE, Y: currentPos.y * SCALE });
             }
-            // For Z we assume close path, handled by Clipper or just ignored for open path logic
         });
+
+        // Don't forget the last subpath
+        if (currentSubPath.length > 0) {
+            subPaths.push(currentSubPath);
+        }
 
         let finalPaths: { X: number, Y: number }[][] = [];
 
         if (params.cutMode === 'on-line') {
-            finalPaths = [rawPath];
+            finalPaths = subPaths;
         } else {
             // Offset logic
             const co = new ClipperLib.ClipperOffset();
             const offsetPaths = new ClipperLib.Paths();
 
-            // Setup Clipper paths
-            const subjPath = new ClipperLib.Path();
-            rawPath.forEach(p => subjPath.push(p));
-
-            // Add path, JoinType (Round=2), EndType (ClosedPolygon=0 or Open=?)
-            co.AddPath(subjPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+            // Add ALL subpaths to Clipper
+            subPaths.forEach(sub => {
+                const subjPath = new ClipperLib.Path();
+                sub.forEach(p => subjPath.push(p));
+                co.AddPath(subjPath, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+            });
 
             const offset = (params.toolDiameter / 2.0) * SCALE;
             const delta = params.cutMode === 'outside' ? offset : -offset;
@@ -234,7 +247,8 @@ export const generateGCode = (svgContent: string, params: GCodeParams): { gcode:
                 gcodeLines.push(`G1 X${p.x.toFixed(3)} Y${p.y.toFixed(3)}`);
             }
 
-            // Close loop if it was closed source
+            // Close loop logic check
+            // For closed shapes, we usually want to return to start
             if (path.length > 2) {
                 // G1 Close Cut (Red)
                 visualizationSegments.push({ p1: { ...headPos }, p2: { ...p0 }, type: 'G1' });

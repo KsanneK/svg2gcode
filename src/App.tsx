@@ -85,9 +85,13 @@ function App() {
         await writeTextFile(path, gcode);
         alert('Plik G-code został pomyślnie zapisany!');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Nie udało się zapisać pliku: ' + err);
+      if (err.toString().includes("reading 'invoke'")) {
+        alert("Błąd: Ta funkcja działa tylko w aplikacji desktopowej Tauri, a nie w przeglądarce internetowej.");
+      } else {
+        alert('Nie udało się zapisać pliku: ' + err);
+      }
     }
   };
 
